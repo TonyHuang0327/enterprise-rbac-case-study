@@ -22,9 +22,9 @@
 ### 2.1 認證（authProvider）
 
 - **login**：呼叫 `login(username, password)`（實為 email + password），將回傳的 `access`、`refresh` 寫入 `localStorage`。
-- **logout**：清除 access/refresh、`last-logo-url`，並 `queryClient.clear()`。
+- **logout**：清除 access/refresh，並 `queryClient.clear()`。
 
-Token 過期判斷與 refresh 邏輯在 `shared/utils/token`（如 `isAccessTokenExpired`、`refreshAccessToken`）；dataProvider 的 `getValidAccessToken()` 會共用同一套 refresh 佇列，避免並發重複 refresh。
+Token 過期判斷與 refresh 邏輯共用同一套 refresh 佇列，避免並發重複 refresh。
 
 ### 2.2 授權（權限）
 
@@ -35,15 +35,7 @@ Token 過期判斷與 refresh 邏輯在 `shared/utils/token`（如 `isAccessToke
 
 ---
 
-## 3. 資源Create、Update
-
-- Zod驗證：使用Zod來做表單驗證(Select元件有時是物件，有時是數字(id)→模糊驗證，兩者都會通過Zod檢查)。
-- transform function：通過驗證後將所有型別轉成後端支援的型別(統一id或統一物件)。
-- unit test：使用vitest來針對每一種資源的驗證及轉換做測試。
-
----
-
-## 4. 狀態管理與快取
+## 3. 狀態管理與快取
 
 - **伺服器狀態**：以 **TanStack React Query** 為主。
 - **快取策略**：`queryClient` 預設 `staleTime: 60 * 1000`、`retry: 1`；各 feature 的 query 可再覆寫 `staleTime` 。
@@ -64,13 +56,9 @@ Token 過期判斷與 refresh 邏輯在 `shared/utils/token`（如 `isAccessToke
     角色擁有的選單由所擁有的權限驅動，若該角色滿足選單所設定之最小權限，則顯示該選單，提供最大/最小權限按鈕供使用者一鍵加入。
 - **選單**：CRUD；選單列表由 `useMeMenuData` 取得，供 SideBar 渲染；權限對應由 `useMenuPermissionMap` 提供。
 
-- **系統儀表板**：CustomRoute `/system-dashboard`，使用 Recharts 等圖表。
-
-  根據使用者權限可選擇儀表板資料範圍(系統、組織、部門、個人)。
-
 ### 4.2 OCR
 
-- **辨識結果入口**：Resource `users/me/ocr` 對應列表頁，以 tab 區分類型（全部、發票、水、瓦斯、交通、郵票、電、電話、其他等等）。
+- **辨識結果入口**：列表頁，以 tab 區分票據類型。
 
 - **各類型**：各自有 config（欄位定義、列表欄、表單）、列表與編輯頁；部分列表即時更新依賴 WebSocket。
 - **上傳與辨識**：UploadArea、OcrRecognizingPopover、全域 listener（useGlobalOcrListener）處理上傳與辨識中狀態並用useStore記錄辨識狀態，使得user可以在其他頁面查看辨識狀態。
@@ -92,7 +80,7 @@ Token 過期判斷與 refresh 邏輯在 `shared/utils/token`（如 `isAccessToke
 捨棄輪詢，全面改用 WebSocket 建立雙向通訊，並在前端實作了客製化的連線管理層：
 
 1. **Singleton 與 Pub/Sub 模式：** 將 WebSocket Client 封裝為單一實體。無論畫面上有多少個 React Components 需要監聽 OCR 狀態，底層永遠只維持「一條」連線，並透過自訂的 `subscribe` 機制將訊息派發給需要的元件，避免多重連線浪費。
-2. **連線保活機制 (Keep-Alive)：** 實作定時健康檢查 (`scheduleHealthCheck`) 與異常斷線自動重連邏輯，確保長時間掛網的背景分頁不會成為死連線。
+2. **連線保活機制：** 實作定時健康檢查 (`scheduleHealthCheck`) 與異常斷線自動重連邏輯，確保長時間掛網的背景分頁不會成為死連線。
 3. **生命週期管理：** 提供明確的 `disconnect` 介面，在使用者登出或 Token 失效時主動銷毀連線與計時器，杜絕 Memory Leak。
 
 **商業效益**
@@ -103,16 +91,16 @@ Token 過期判斷與 refresh 邏輯在 `shared/utils/token`（如 `isAccessToke
 ### 5.2：動態 RBAC 權限流轉與 Zod 邊界防禦
 
 **原始痛點**
-企業級後台面臨兩大挑戰：
+開發時面臨兩大挑戰：
 
-1. **權限矩陣極度複雜：** 系統不僅有「超級管理員」與「一般使用者」，更牽涉到多個組織、部門與自訂角色。若前端使用 Hardcoding（硬編碼）判斷角色來控制畫面，系統將無法維護。
+1. **權限矩陣極度複雜：** 系統不僅有「超級管理員」與「一般使用者」，更牽涉到多個組織、部門與自訂角色。若前端使用 Hardcoding判斷角色來控制畫面，系統將無法維護。
 2. **UI 元件與 API 規格的資料割裂 (Dirty Data)：** 前端複雜的 UI 元件（如多選 Select）經常吐出物件 (Object) 或模糊型別，但後端 API 嚴格要求純數字 ID 陣列。若缺乏防禦，極易導致 API 報錯 (500 Internal Server Error) 或寫入髒資料。
 
 **架構解法**
 實作了完全由「資料驅動 (Data-Driven)」的 RBAC 架構與嚴格的資料邊界：
 
-1. **API 級別的微觀授權 (Micro-Authorization)：** 捨棄傳統的 `role === 'admin'` 判斷。開發 `useHasApiPermission(method, path)` Hook，讓前端按鈕的顯示與否，直接與後端 API 權限規格綁定。當角色權限動態變更時，前端 UI 可達成「零改動」自動適應。
-2. **Zod Schema 攔截與變形 (Validation & Transformation)：** 在表單送出層導入 Zod 進行嚴格校驗。不僅做基礎格式驗證，更利用 Zod 的 `transform` API 作為「資料清洗層」。將前端 UI 產生的模糊型別（如包含 label 的 Object），在發送 Request 前強制轉型為後端合法的 Payload，徹底隔絕髒資料。
+1. **API 級別的授權：** 捨棄傳統的 `role === 'admin'` 判斷。開發 `useHasApiPermission(method, path)` Hook，讓前端按鈕的顯示與否，直接與後端 API 權限規格綁定。當角色權限動態變更時，前端 UI 可達成「零改動」自動適應。
+2. **Zod Schema 攔截與變形 (Validation & Transformation)：** 在表單送出層導入 Zod 進行嚴格校驗。不僅做基礎格式驗證，並利用`transform` function 作為「資料清洗層」。將前端 UI 產生的模糊型別（如包含 label 的 Object），在發送 Request 前強制轉型為後端合法的 Payload，徹底隔絕髒資料。
 3. **動態路由與選單生成：** 側邊選單完全依賴後端回傳的權限樹 (`useMeMenuData`) 進行動態渲染，確保越權使用者連選單入口都無法看見。
 
 **商業效益**
